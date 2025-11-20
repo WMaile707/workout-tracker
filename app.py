@@ -35,39 +35,121 @@ def cm_to_in(cm: float) -> float:
     except Exception:
         return 0.0
 
+
 # ======================================================
-# BASIC CONFIG
+# BASIC CONFIG – PROGRAM DEFINITION
 # ======================================================
 
 AI_ENABLED = True  # flip to False if you ever want to hard-disable AI
 
-# 4-day template – you can edit these later
+# 4-day template with equipment + muscles
 PROGRAM = {
     "Upper 1": [
-        {"name": "Flat Barbell Bench Press", "equipment": "Smith Machine / Bench Press Station", "muscles": "Chest, triceps, front delts", "compound": True},
-        {"name": "Lat Pulldown", "equipment": "Lat Pulldown Machine", "muscles": "Lats, upper back, biceps", "compound": True},
-        {"name": "Seated Row", "equipment": "Cable Row Machine", "muscles": "Mid-back, lats, rear delts, biceps", "compound": True},
-        {"name": "Lateral Raise", "equipment": "Dumbbells or Cable", "muscles": "Side delts", "compound": False},
+        {
+            "name": "Flat Bench – Smith",
+            "equipment": "Smith machine",
+            "muscles": "Chest, triceps, front delts",
+            "compound": True,
+        },
+        {
+            "name": "Lat Pulldown – Wide Grip",
+            "equipment": "Lat pulldown machine",
+            "muscles": "Lats, upper back, biceps",
+            "compound": True,
+        },
+        {
+            "name": "Seated Row – Cable",
+            "equipment": "Cable row machine",
+            "muscles": "Mid-back, lats, rear delts, biceps",
+            "compound": True,
+        },
+        {
+            "name": "Lateral Raise – Dumbbells",
+            "equipment": "Dumbbells",
+            "muscles": "Side delts",
+            "compound": False,
+        },
     ],
     "Lower 1": [
-        {"name": "Leg Press", "equipment": "Leg Press Machine", "muscles": "Quads, glutes, hamstrings", "compound": True},
-        {"name": "Romanian Deadlift", "equipment": "Barbell or Smith Machine", "muscles": "Hamstrings, glutes, lower back", "compound": True},
-        {"name": "Leg Curl", "equipment": "Leg Curl Machine", "muscles": "Hamstrings", "compound": False},
-        {"name": "Calf Raise", "equipment": "Calf Raise Machine", "muscles": "Calves", "compound": False},
+        {
+            "name": "Leg Press",
+            "equipment": "Leg press machine",
+            "muscles": "Quads, glutes, hamstrings",
+            "compound": True,
+        },
+        {
+            "name": "Romanian Deadlift – Smith",
+            "equipment": "Smith machine",
+            "muscles": "Hamstrings, glutes, lower back",
+            "compound": True,
+        },
+        {
+            "name": "Leg Curl",
+            "equipment": "Leg curl machine",
+            "muscles": "Hamstrings",
+            "compound": False,
+        },
+        {
+            "name": "Calf Raise – Machine",
+            "equipment": "Calf raise machine",
+            "muscles": "Calves",
+            "compound": False,
+        },
     ],
     "Upper 2": [
-        {"name": "Incline Bench Press", "equipment": "Smith Machine / Incline Bench", "muscles": "Upper chest, shoulders, triceps", "compound": True},
-        {"name": "Pull-Down / Pull-Up", "equipment": "Lat Pulldown or Assisted Pull-Up", "muscles": "Lats, biceps", "compound": True},
-        {"name": "Row Variation", "equipment": "Row Machine or Dumbbells", "muscles": "Back, rear delts, biceps", "compound": True},
-        {"name": "Bicep Curl", "equipment": "Cable or Dumbbells", "muscles": "Biceps", "compound": False},
+        {
+            "name": "Incline Bench – Smith",
+            "equipment": "Smith machine",
+            "muscles": "Upper chest, shoulders, triceps",
+            "compound": True,
+        },
+        {
+            "name": "Pull-Down – Neutral Grip",
+            "equipment": "Lat pulldown machine",
+            "muscles": "Lats, biceps",
+            "compound": True,
+        },
+        {
+            "name": "Row – Chest Supported Machine",
+            "equipment": "Row machine",
+            "muscles": "Back, rear delts, biceps",
+            "compound": True,
+        },
+        {
+            "name": "Bicep Curl – Cable",
+            "equipment": "Cable",
+            "muscles": "Biceps",
+            "compound": False,
+        },
     ],
     "Lower 2": [
-        {"name": "Hack Squat / Squat Machine", "equipment": "Hack Squat or Squat Machine", "muscles": "Quads, glutes", "compound": True},
-        {"name": "Hip Thrust / Glute Bridge", "equipment": "Machine or Barbell", "muscles": "Glutes, hamstrings", "compound": True},
-        {"name": "Leg Extension", "equipment": "Leg Extension Machine", "muscles": "Quads", "compound": False},
-        {"name": "Calf Raise (seated/standing)", "equipment": "Calf Raise Machine", "muscles": "Calves", "compound": False},
+        {
+            "name": "Hack Squat / Squat Machine",
+            "equipment": "Hack squat machine",
+            "muscles": "Quads, glutes",
+            "compound": True,
+        },
+        {
+            "name": "Hip Thrust – Machine",
+            "equipment": "Hip thrust machine",
+            "muscles": "Glutes, hamstrings",
+            "compound": True,
+        },
+        {
+            "name": "Leg Extension",
+            "equipment": "Leg extension machine",
+            "muscles": "Quads",
+            "compound": False,
+        },
+        {
+            "name": "Calf Raise – Seated",
+            "equipment": "Calf raise machine",
+            "muscles": "Calves",
+            "compound": False,
+        },
     ],
 }
+
 
 # ======================================================
 # GOOGLE SHEETS LOGGING HELPERS
@@ -91,6 +173,25 @@ def get_log_worksheet():
     return ws
 
 
+def _empty_log_df():
+    return pd.DataFrame(
+        columns=[
+            "datetime",
+            "day",
+            "exercise",
+            "equipment",
+            "plate_weight_lbs",
+            "base_weight_lbs",
+            "base_type",
+            "total_weight_lbs",
+            "reps",
+            "difficulty",
+            "goal",
+            "user_bodyweight_kg",
+        ]
+    )
+
+
 def load_log():
     """
     Load the full workout log from the Google Sheet.
@@ -99,34 +200,30 @@ def load_log():
         ws = get_log_worksheet()
         data = ws.get_all_values()
         if not data:
-            # No rows yet
-            return pd.DataFrame(
-                columns=[
-                    "datetime",
-                    "day",
-                    "exercise",
-                    "plate_weight_lbs",
-                    "base_weight_lbs",
-                    "base_type",
-                    "total_weight_lbs",
-                    "reps",
-                    "difficulty",
-                    "goal",
-                    "user_bodyweight_kg",
-                ]
-            )
+            return _empty_log_df()
 
         headers = data[0]
         rows = data[1:]
         if not rows:
-            return pd.DataFrame(columns=headers)
+            return _empty_log_df()
 
         df = pd.DataFrame(rows, columns=headers)
+
+        # Ensure equipment column exists
+        if "equipment" not in df.columns:
+            df["equipment"] = ""
 
         # Convert types
         if "datetime" in df.columns:
             df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
-        for col in ["plate_weight_lbs", "base_weight_lbs", "total_weight_lbs", "reps", "difficulty", "user_bodyweight_kg"]:
+        for col in [
+            "plate_weight_lbs",
+            "base_weight_lbs",
+            "total_weight_lbs",
+            "reps",
+            "difficulty",
+            "user_bodyweight_kg",
+        ]:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
 
@@ -134,21 +231,7 @@ def load_log():
 
     except Exception as e:
         st.warning(f"Error loading log from Google Sheets: {e}")
-        return pd.DataFrame(
-            columns=[
-                "datetime",
-                "day",
-                "exercise",
-                "plate_weight_lbs",
-                "base_weight_lbs",
-                "base_type",
-                "total_weight_lbs",
-                "reps",
-                "difficulty",
-                "goal",
-                "user_bodyweight_kg",
-            ]
-        )
+        return _empty_log_df()
 
 
 def save_log_row(row_dict):
@@ -163,6 +246,7 @@ def save_log_row(row_dict):
             "datetime",
             "day",
             "exercise",
+            "equipment",
             "plate_weight_lbs",
             "base_weight_lbs",
             "base_type",
@@ -175,6 +259,11 @@ def save_log_row(row_dict):
 
         if not existing:
             ws.append_row(expected_cols)
+        else:
+            header = existing[0]
+            if len(header) != len(expected_cols) or header != expected_cols:
+                # overwrite header row if mismatched
+                ws.update("A1", [expected_cols])
 
         dt_val = row_dict.get("datetime")
         if isinstance(dt_val, datetime):
@@ -186,6 +275,7 @@ def save_log_row(row_dict):
             dt_str,
             row_dict.get("day", ""),
             row_dict.get("exercise", ""),
+            row_dict.get("equipment", ""),
             row_dict.get("plate_weight_lbs", ""),
             row_dict.get("base_weight_lbs", ""),
             row_dict.get("base_type", ""),
@@ -296,7 +386,7 @@ def hybrid_weight_suggestion(log_df, day, exercise_name, goal):
 def build_training_summary_for_day(day: str) -> str:
     df = load_log()
     if df.empty:
-        return "No training data logged yet in workout_log.csv."
+        return "No training data logged yet."
 
     if day not in PROGRAM:
         return f"No program definition found for day '{day}'."
@@ -348,7 +438,7 @@ def build_training_summary_for_day(day: str) -> str:
 
 
 # ======================================================
-# AI CHAT (REAL OPENAI INTEGRATION)
+# AI CHAT (OPENAI)
 # ======================================================
 
 def init_chat_state():
@@ -358,15 +448,15 @@ def init_chat_state():
 
 def ai_trainer_reply(user_message: str, day: str, goal: str, profile: dict) -> str:
     if not AI_ENABLED:
-        return "AI trainer is not enabled yet.\n\nTo enable it, set AI_ENABLED = True in the code and configure the OpenAI API."
+        return "AI trainer is not enabled yet."
 
     log_summary = build_training_summary_for_day(day)
 
     try:
-        client = OpenAI()  # uses OPENAI_API_KEY / Streamlit secrets
+        client = OpenAI()  # uses OPENAI_API_KEY from environment / secrets
 
         system_prompt = f"""
-You are a friendly but direct lifting coach.
+You are a clear, direct lifting coach.
 
 User profile:
 - Age: {profile.get('age')}
@@ -375,23 +465,22 @@ User profile:
 - Height (cm): {profile.get('height_cm')}
 - Bodyweight (kg): {profile.get('bodyweight_kg')}
 - Preferred duration: {profile.get('preferred_duration')}
+- Split: {profile.get('preferred_split')}
 - Injuries/Limitations: {profile.get('injuries')}
 - Notes: {profile.get('notes')}
 
 Current workout day: {day}
 Current goal: {goal}
 
-Recent training data (from the app's workout log CSV):
+Recent training data:
 {log_summary}
 
 Coaching rules:
-- Talk like you would to a lifter in the gym. Clear, direct, no fluff.
-- Be concrete and specific: sets, reps, rest times, and weight strategy.
-- If the user asks about specific weights %, use them to guide progression.
-- If there is no log data yet, give solid starting recommendations.
-- If the user mentions an exercise by name, give advice specific to that lift.
-- Suggest adjustments: more/less sets, reps, rest, and when to increase/decrease weight.
-- Keep answers short and punchy, not essays.
+- Talk like you would to a lifter in the gym. Clear and direct.
+- Give specific sets, reps, rest ranges, and weight strategy.
+- If no log data, give solid starting points.
+- If log exists, use it: mention progress, suggest next steps.
+- Be concise, not essay-length.
 """.strip()
 
         messages = [{"role": "system", "content": system_prompt}]
@@ -489,7 +578,7 @@ def main():
                 "5 hours",
                 "Flexible",
             ],
-            index=1,
+            index=2,
         )
 
         preferred_split = st.selectbox(
@@ -538,7 +627,11 @@ def main():
     if bmi is not None:
         st.sidebar.metric("BMI (approx)", f"{bmi:.1f}")
 
-    goal = st.sidebar.selectbox("Training Goal", ["Strength", "Muscle Growth", "Endurance", "General Fitness"], index=1)
+    goal = st.sidebar.selectbox(
+        "Training Goal",
+        ["Strength", "Muscle Growth", "Endurance", "General Fitness"],
+        index=1,
+    )
     day_options = list(PROGRAM.keys())
     today_day = st.sidebar.selectbox("Today is:", day_options, index=0)
     show_log_table = st.sidebar.checkbox("Show log table at bottom", value=True)
@@ -580,24 +673,32 @@ def main():
 
         with col_left:
             st.subheader("Today's Task List")
-            st.write("Suggested sets, reps, and rest based on your goal. You log what you actually do.")
+            st.write("Suggested plan + logging. Each click saves one set to your log.")
 
             for ex in PROGRAM[today_day]:
                 ex_name = ex["name"]
+                equipment = ex.get("equipment", "")
+                muscles = ex.get("muscles", "")
+                compound = ex.get("compound", True)
+
                 st.markdown(f"### {ex_name}")
+                st.write(f"**Equipment:** {equipment}")
+                st.write(f"**Muscles:** {muscles}")
 
-                st.write(f"**Equipment:** {ex['equipment']}")
-                st.write(f"**Muscles:** {ex['muscles']}")
-
-                with st.expander("Form & posture details", expanded=False):
-                    st.write("Keep shoulders tight, brace core, control the weight. No ego lifting, smooth reps.")
+                with st.expander("Form & posture (basic)", expanded=False):
+                    st.write(
+                        "Brace your core, control the weight, no bouncing. "
+                        "Use a full range of motion you can control without joint pain."
+                    )
 
                 base_sets = 3
                 base_reps = 8
-                rec_sets, rec_reps, rec_rest = recommended_sets_reps_rest(goal, base_sets, base_reps, ex["compound"])
+                rec_sets, rec_reps, rec_rest = recommended_sets_reps_rest(
+                    goal, base_sets, base_reps, compound
+                )
 
                 st.write("**Suggested plan:**")
-                st.write(f"- Sets per set: {rec_sets}")
+                st.write(f"- Sets per exercise: {rec_sets}")
                 st.write(f"- Reps per set: {rec_reps}")
                 st.write(f"- Rest between sets: {rec_rest} seconds")
 
@@ -612,17 +713,22 @@ def main():
                             when_str = pd.to_datetime(dt_str).strftime("%Y-%m-%d %H:%M")
                         except Exception:
                             when_str = "unknown"
+
                     st.info(
-                        f"Last logged total: {last.get('total_weight_lbs', 0)} lbs "
-                        f"for {last.get('reps', 0)} reps at difficulty "
+                        f"Last logged: {last.get('total_weight_lbs', 0)} lbs "
+                        f"x {last.get('reps', 0)} reps @ difficulty "
                         f"{last.get('difficulty', 'N/A')}/10 on {when_str}."
                     )
 
-                suggested_total_lbs, est_1rm_lbs = hybrid_weight_suggestion(log_df, today_day, ex_name, goal)
+                suggested_total_lbs, est_1rm_lbs = hybrid_weight_suggestion(
+                    log_df, today_day, ex_name, goal
+                )
                 if est_1rm_lbs is not None:
                     st.write(f"Estimated 1RM from history: ~{est_1rm_lbs:.1f} lbs")
                 if suggested_total_lbs is not None:
-                    st.write(f"Suggested working total weight today: ~{suggested_total_lbs:.1f} lbs")
+                    st.write(
+                        f"Suggested working total weight today: ~{suggested_total_lbs:.1f} lbs"
+                    )
 
                 st.write("**Log a set for this exercise**")
 
@@ -673,7 +779,9 @@ def main():
                     key=f"diff_{today_day}_{ex_name}",
                 )
 
-                if st.button(f"Save set for {ex_name}", key=f"save_{today_day}_{ex_name}"):
+                if st.button(
+                    f"Save set for {ex_name}", key=f"save_{today_day}_{ex_name}"
+                ):
                     if reps <= 0 or total_weight <= 0:
                         st.warning("Enter a positive total weight and reps before saving.")
                     else:
@@ -681,6 +789,7 @@ def main():
                             "datetime": datetime.now(),
                             "day": today_day,
                             "exercise": ex_name,
+                            "equipment": equipment,
                             "plate_weight_lbs": plate_weight,
                             "base_weight_lbs": base_weight,
                             "base_type": base_type,
@@ -698,9 +807,15 @@ def main():
 
             img_path = "muscles_front_back.png"
             if os.path.exists(img_path):
-                st.image(img_path, caption="Front & Back muscle groups", use_container_width=True)
+                st.image(
+                    img_path,
+                    caption="Front & Back muscle groups",
+                    use_container_width=True,
+                )
             else:
-                st.info("Place 'muscles_front_back.png' in this folder to show the muscle diagram here.")
+                st.info(
+                    "Place 'muscles_front_back.png' in this folder to show the muscle diagram here."
+                )
 
             with st.expander("Legend: Terms & Scales", expanded=False):
                 st.markdown(
@@ -765,7 +880,6 @@ def main():
                 st.write("No data for this exercise yet.")
             else:
                 sub = sub.copy()
-                sub["date"] = sub["datetime"].dt.date
                 sub["volume"] = sub["total_weight_lbs"] * sub["reps"]
 
                 est_list = []
