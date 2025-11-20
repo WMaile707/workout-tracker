@@ -1,16 +1,74 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-import os
-from openai import OpenAI  # OpenAI client
-
+from openai import OpenAI
 import json
 import gspread
 from google.oauth2.service_account import Credentials
+import os
+
+# =========================
+# UNIT CONVERSION HELPERS
+# =========================
+
+def lbs_to_kg(lbs: float) -> float:
+    try:
+        return round(lbs * 0.45359237, 2)
+    except Exception:
+        return 0.0
+
+def kg_to_lbs(kg: float) -> float:
+    try:
+        return round(kg / 0.45359237, 2)
+    except Exception:
+        return 0.0
+
+def in_to_cm(i: float) -> float:
+    try:
+        return round(i * 2.54, 2)
+    except Exception:
+        return 0.0
+
+def cm_to_in(cm: float) -> float:
+    try:
+        return round(cm / 2.54, 2)
+    except Exception:
+        return 0.0
 
 # ======================================================
-# CONFIG
+# BASIC CONFIG
 # ======================================================
+
+AI_ENABLED = True  # flip to False if you ever want to hard-disable AI
+
+# 4-day template – you can edit these later
+PROGRAM = {
+    "Upper 1": [
+        {"name": "Flat Barbell Bench Press", "equipment": "Smith Machine / Bench Press Station", "muscles": "Chest, triceps, front delts", "compound": True},
+        {"name": "Lat Pulldown", "equipment": "Lat Pulldown Machine", "muscles": "Lats, upper back, biceps", "compound": True},
+        {"name": "Seated Row", "equipment": "Cable Row Machine", "muscles": "Mid-back, lats, rear delts, biceps", "compound": True},
+        {"name": "Lateral Raise", "equipment": "Dumbbells or Cable", "muscles": "Side delts", "compound": False},
+    ],
+    "Lower 1": [
+        {"name": "Leg Press", "equipment": "Leg Press Machine", "muscles": "Quads, glutes, hamstrings", "compound": True},
+        {"name": "Romanian Deadlift", "equipment": "Barbell or Smith Machine", "muscles": "Hamstrings, glutes, lower back", "compound": True},
+        {"name": "Leg Curl", "equipment": "Leg Curl Machine", "muscles": "Hamstrings", "compound": False},
+        {"name": "Calf Raise", "equipment": "Calf Raise Machine", "muscles": "Calves", "compound": False},
+    ],
+    "Upper 2": [
+        {"name": "Incline Bench Press", "equipment": "Smith Machine / Incline Bench", "muscles": "Upper chest, shoulders, triceps", "compound": True},
+        {"name": "Pull-Down / Pull-Up", "equipment": "Lat Pulldown or Assisted Pull-Up", "muscles": "Lats, biceps", "compound": True},
+        {"name": "Row Variation", "equipment": "Row Machine or Dumbbells", "muscles": "Back, rear delts, biceps", "compound": True},
+        {"name": "Bicep Curl", "equipment": "Cable or Dumbbells", "muscles": "Biceps", "compound": False},
+    ],
+    "Lower 2": [
+        {"name": "Hack Squat / Squat Machine", "equipment": "Hack Squat or Squat Machine", "muscles": "Quads, glutes", "compound": True},
+        {"name": "Hip Thrust / Glute Bridge", "equipment": "Machine or Barbell", "muscles": "Glutes, hamstrings", "compound": True},
+        {"name": "Leg Extension", "equipment": "Leg Extension Machine", "muscles": "Quads", "compound": False},
+        {"name": "Calf Raise (seated/standing)", "equipment": "Calf Raise Machine", "muscles": "Calves", "compound": False},
+    ],
+}
+
 # ======================================================
 # GOOGLE SHEETS LOGGING HELPERS
 # ======================================================
@@ -36,9 +94,6 @@ def get_log_worksheet():
 def load_log():
     """
     Load the full workout log from the Google Sheet.
-
-    If the sheet is empty, return an empty DataFrame
-    with the expected columns.
     """
     try:
         ws = get_log_worksheet()
@@ -61,7 +116,6 @@ def load_log():
                 ]
             )
 
-        # First row is header
         headers = data[0]
         rows = data[1:]
         if not rows:
@@ -79,7 +133,6 @@ def load_log():
         return df
 
     except Exception as e:
-        # On error, return empty DF so the app still runs
         st.warning(f"Error loading log from Google Sheets: {e}")
         return pd.DataFrame(
             columns=[
@@ -101,12 +154,10 @@ def load_log():
 def save_log_row(row_dict):
     """
     Append a single row (dict) to the Google Sheet 'log' worksheet.
-    If sheet has no header yet, write header first.
     """
     try:
         ws = get_log_worksheet()
 
-        # Get existing data to see if header exists
         existing = ws.get_all_values()
         expected_cols = [
             "datetime",
@@ -122,21 +173,15 @@ def save_log_row(row_dict):
             "user_bodyweight_kg",
         ]
 
-        # If sheet empty, write header row
         if not existing:
             ws.append_row(expected_cols)
-        else:
-            # If header exists but is different/short, you could adjust here if needed
-            pass
 
-        # Ensure datetime is string
         dt_val = row_dict.get("datetime")
         if isinstance(dt_val, datetime):
             dt_str = dt_val.isoformat()
         else:
             dt_str = str(dt_val) if dt_val is not None else ""
 
-        # Build row in correct column order
         row_values = [
             dt_str,
             row_dict.get("day", ""),
@@ -155,7 +200,6 @@ def save_log_row(row_dict):
 
     except Exception as e:
         st.warning(f"Error saving log row to Google Sheets: {e}")
-
 
 
 def get_last_entries(log_df, day, exercise_name):
@@ -250,10 +294,6 @@ def hybrid_weight_suggestion(log_df, day, exercise_name, goal):
 # ======================================================
 
 def build_training_summary_for_day(day: str) -> str:
-    """
-    Build a short text summary of recent training for the current day
-    (Upper 1, Lower 1, etc.) to feed into the AI.
-    """
     df = load_log()
     if df.empty:
         return "No training data logged yet in workout_log.csv."
@@ -261,7 +301,6 @@ def build_training_summary_for_day(day: str) -> str:
     if day not in PROGRAM:
         return f"No program definition found for day '{day}'."
 
-    # Filter by this day
     df_day = df[df["day"] == day].sort_values("datetime")
     if df_day.empty:
         return f"No logged sets yet for {day}."
@@ -317,24 +356,14 @@ def init_chat_state():
         st.session_state["chat_history"] = []
 
 
-def ai_trainer_reply(user_message: str, day: str, goal: str, profile: dict):
-    """
-    Real AI trainer using OpenAI Chat Completions.
-    Uses:
-    - st.session_state["chat_history"] for memory within the current app session.
-    - build_training_summary_for_day(day) to be aware of your logged history.
-    """
+def ai_trainer_reply(user_message: str, day: str, goal: str, profile: dict) -> str:
     if not AI_ENABLED:
-        return (
-            "AI trainer is not enabled yet.\n\n"
-            "To enable it, set AI_ENABLED = True in the code and configure the OpenAI API."
-        )
+        return "AI trainer is not enabled yet.\n\nTo enable it, set AI_ENABLED = True in the code and configure the OpenAI API."
 
-    # Build log-aware summary for this day
     log_summary = build_training_summary_for_day(day)
 
     try:
-        client = OpenAI()  # uses OPENAI_API_KEY from your environment
+        client = OpenAI()  # uses OPENAI_API_KEY / Streamlit secrets
 
         system_prompt = f"""
 You are a friendly but direct lifting coach.
@@ -346,34 +375,31 @@ User profile:
 - Height (cm): {profile.get('height_cm')}
 - Bodyweight (kg): {profile.get('bodyweight_kg')}
 - Preferred duration: {profile.get('preferred_duration')}
-- Preferred split: {profile.get('preferred_split')}
-- Injuries/limitations: {profile.get('injuries')}
+- Injuries/Limitations: {profile.get('injuries')}
 - Notes: {profile.get('notes')}
 
 Current workout day: {day}
 Current goal: {goal}
 
-Recent training data (from the app's workout_log.csv):
+Recent training data (from the app's workout log CSV):
 {log_summary}
 
 Coaching rules:
-- Talk like you would to a lifter in the gym: clear, direct, no fluff.
-- Be concrete and specific: talk sets, reps, rest times, and weight strategy.
-- If the log summary shows specific weights/reps, use them to guide progressions.
-- If there is no log data yet, say that clearly and give general starting recommendations.
-- If user mentions an exercise by name, give advice specific to that exercise.
+- Talk like you would to a lifter in the gym. Clear, direct, no fluff.
+- Be concrete and specific: sets, reps, rest times, and weight strategy.
+- If the user asks about specific weights %, use them to guide progression.
+- If there is no log data yet, give solid starting recommendations.
+- If the user mentions an exercise by name, give advice specific to that lift.
 - Suggest adjustments: more/less sets, reps, rest, and when to increase/decrease weight.
-- Keep responses short enough to read quickly between sets (no essays).
-"""
+- Keep answers short and punchy, not essays.
+""".strip()
 
         messages = [{"role": "system", "content": system_prompt}]
 
-        # Add past chat for memory (within this Streamlit session)
-        for m in st.session_state["chat_history"]:
-            role = "user" if m["role"] == "user" else "assistant"
-            messages.append({"role": role, "content": m["content"]})
+        for msg in st.session_state["chat_history"]:
+            role = "user" if msg["role"] == "user" else "assistant"
+            messages.append({"role": role, "content": msg["content"]})
 
-        # Add new user message
         messages.append({"role": "user", "content": user_message})
 
         response = client.chat.completions.create(
@@ -389,14 +415,13 @@ Coaching rules:
 
 
 def handle_send_chat(day: str, goal: str, profile: dict):
-    """Callback to handle sending chat, keeping Streamlit happy."""
     msg = st.session_state.get("chat_input", "")
-    if not msg.strip():
+    msg = msg.strip()
+    if not msg:
         return
-    st.session_state["chat_history"].append({"role": "user", "content": msg.strip()})
-    reply = ai_trainer_reply(msg.strip(), day, goal, profile)
+    st.session_state["chat_history"].append({"role": "user", "content": msg})
+    reply = ai_trainer_reply(msg, day, goal, profile)
     st.session_state["chat_history"].append({"role": "assistant", "content": reply})
-    st.session_state["chat_input"] = ""
 
 
 # ======================================================
@@ -407,67 +432,53 @@ def main():
     st.set_page_config(page_title="System Stress Test", page_icon="💪", layout="wide")
     init_chat_state()
 
-    # -------------------------
-    # SIDEBAR – USER PROFILE & UNIT SYSTEM
-    # -------------------------
+    # ----- SIDEBAR: USER PROFILE & SETTINGS -----
     st.sidebar.title("User Profile & Settings")
 
     unit_system = st.sidebar.selectbox("Unit System", ["Imperial (lbs/in)", "Metric (kg/cm)"], index=0)
     st.session_state["unit_system"] = unit_system
 
     if "raw_height_cm" not in st.session_state:
-        st.session_state.raw_height_cm = 179.0
+        st.session_state["raw_height_cm"] = 180.0
     if "raw_weight_kg" not in st.session_state:
-        st.session_state.raw_weight_kg = 105.0
+        st.session_state["raw_weight_kg"] = 80.0
 
     if unit_system.startswith("Imperial"):
-        shown_height = cm_to_in(st.session_state.raw_height_cm)
-        shown_weight = kg_to_lbs(st.session_state.raw_weight_kg)
+        show_height = cm_to_in(st.session_state["raw_height_cm"])
+        show_weight = kg_to_lbs(st.session_state["raw_weight_kg"])
         height_label = "Height (inches)"
-        weight_label = "Body Weight (lbs)"
-        height_min, height_max = 40.0, 100.0
-        weight_min, weight_max = 70.0, 600.0
+        weight_label = "Body weight (lbs)"
+        height_min, height_max = 40.0, 90.0
+        weight_min, weight_max = 80.0, 600.0
     else:
-        shown_height = st.session_state.raw_height_cm
-        shown_weight = st.session_state.raw_weight_kg
+        show_height = st.session_state["raw_height_cm"]
+        show_weight = st.session_state["raw_weight_kg"]
         height_label = "Height (cm)"
-        weight_label = "Body Weight (kg)"
-        height_min, height_max = 100.0, 250.0
-        weight_min, weight_max = 30.0, 300.0
+        weight_label = "Body weight (kg)"
+        height_min, height_max = 130.0, 230.0
+        weight_min, weight_max = 40.0, 300.0
 
     with st.sidebar.expander("Profile", expanded=True):
-        age = st.number_input("Age", min_value=10, max_value=100, value=19)
+        age = st.number_input("Age", min_value=10, max_value=80, value=19, step=1)
+        sex = st.selectbox("Sex", ["Male", "Female", "Other"], index=0)
+        experience = st.selectbox("Experience Level", ["Novice", "Intermediate", "Advanced"], index=0)
 
         new_height = st.number_input(
             height_label,
             min_value=height_min,
             max_value=height_max,
-            value=float(shown_height),
+            value=float(show_height),
             step=0.5,
-            help="Switch units above; value auto-converts between inches and cm."
         )
-        if unit_system.startswith("Imperial"):
-            st.session_state.raw_height_cm = in_to_cm(new_height)
-        else:
-            st.session_state.raw_height_cm = new_height
-
         new_weight = st.number_input(
             weight_label,
             min_value=weight_min,
             max_value=weight_max,
-            value=float(shown_weight),
+            value=float(show_weight),
             step=0.5,
-            help="Switch units above; value auto-converts between lbs and kg."
         )
-        if unit_system.startswith("Imperial"):
-            st.session_state.raw_weight_kg = lbs_to_kg(new_weight)
-        else:
-            st.session_state.raw_weight_kg = new_weight
 
-        sex = st.selectbox("Sex", ["Male", "Female", "Other"], index=0)
-        experience = st.selectbox("Experience Level", ["Novice", "Intermediate", "Advanced"], index=0)
-
-        pref_duration = st.selectbox(
+        preferred_duration = st.selectbox(
             "Preferred Session Duration",
             [
                 "30 min (quick)",
@@ -478,50 +489,62 @@ def main():
                 "5 hours",
                 "Flexible",
             ],
-            index=2,
+            index=1,
         )
 
-        pref_split = st.selectbox("Preferred Split", ["Upper/Lower", "Push/Pull/Legs", "Full Body", "Custom"], index=0)
+        preferred_split = st.selectbox(
+            "Preferred Split",
+            ["Upper/Lower", "Push/Pull/Legs", "Full Body", "Custom"],
+            index=0,
+        )
+
         injuries = st.text_area("Injuries / limitations (optional)", height=60)
         notes = st.text_area("Notes / preferences (optional)", height=60)
 
-        height_m = st.session_state.raw_height_cm / 100.0 if st.session_state.raw_height_cm > 0 else 0
-        weight_kg = st.session_state.raw_weight_kg
-        if height_m > 0 and weight_kg > 0:
-            bmi = weight_kg / (height_m ** 2)
-            st.metric("BMI (approx)", f"{bmi:.1f}")
-        else:
-            bmi = None
+    if unit_system.startswith("Imperial"):
+        st.session_state["raw_height_cm"] = in_to_cm(new_height)
+        st.session_state["raw_weight_kg"] = lbs_to_kg(new_weight)
+    else:
+        st.session_state["raw_height_cm"] = new_height
+        st.session_state["raw_weight_kg"] = new_weight
 
-        if st.session_state.raw_height_cm < 130 or st.session_state.raw_height_cm > 220:
-            st.warning("Height looks unusual. Double-check the value and unit system.")
-        if st.session_state.raw_weight_kg < 40 or st.session_state.raw_weight_kg > 250:
-            st.warning("Body weight looks unusual. Double-check the value and unit system.")
+    height_cm = st.session_state["raw_height_cm"]
+    bodyweight_kg = st.session_state["raw_weight_kg"]
+
+    if height_cm < 130 or height_cm > 230:
+        st.sidebar.warning("Height looks unusual. Double-check the value and unit system.")
+    if bodyweight_kg < 40 or bodyweight_kg > 250:
+        st.sidebar.warning("Body weight looks unusual. Double-check the value and unit system.")
+
+    bmi = None
+    if height_cm > 0:
+        bmi = bodyweight_kg / ((height_cm / 100.0) ** 2)
 
     profile = {
         "age": age,
-        "height_cm": st.session_state.raw_height_cm,
-        "bodyweight_kg": st.session_state.raw_weight_kg,
-        "bmi": bmi,
         "sex": sex,
         "experience": experience,
-        "preferred_duration": pref_duration,
-        "preferred_split": pref_split,
+        "height_cm": height_cm,
+        "bodyweight_kg": bodyweight_kg,
+        "preferred_duration": preferred_duration,
+        "preferred_split": preferred_split,
         "injuries": injuries,
         "notes": notes,
         "unit_system": unit_system,
+        "bmi": bmi,
     }
     st.session_state["user_profile"] = profile
 
-    goal = st.sidebar.selectbox("Training Goal", GOALS, index=1)
-    day = st.sidebar.selectbox("Today is:", list(PROGRAM.keys()), index=0)
+    if bmi is not None:
+        st.sidebar.metric("BMI (approx)", f"{bmi:.1f}")
+
+    goal = st.sidebar.selectbox("Training Goal", ["Strength", "Muscle Growth", "Endurance", "General Fitness"], index=1)
+    day_options = list(PROGRAM.keys())
+    today_day = st.sidebar.selectbox("Today is:", day_options, index=0)
     show_log_table = st.sidebar.checkbox("Show log table at bottom", value=True)
 
-    # -------------------------
-    # SIDEBAR – TRAINER CHAT
-    # -------------------------
     st.sidebar.markdown("---")
-    st.sidebar.header("Trainer Chat (AI)")
+    st.sidebar.subheader("Trainer Chat (AI)")
 
     chat_box = st.sidebar.container(height=250, border=True)
     for msg in st.session_state["chat_history"]:
@@ -534,14 +557,12 @@ def main():
     st.sidebar.button(
         "Send to coach",
         on_click=handle_send_chat,
-        args=(day, goal, profile),
+        args=(today_day, goal, profile),
     )
 
-    # -------------------------
-    # HEADER
-    # -------------------------
+    # ----- MAIN HEADER -----
     now = datetime.now()
-    st.title(f"System Stress Test: {day}")
+    st.title(f"System Stress Test: {today_day}")
     st.caption(
         f"Date: {now.strftime('%Y-%m-%d')} | Time: {now.strftime('%H:%M:%S')} | "
         f"Goal: {goal} | Units: {unit_system}"
@@ -551,9 +572,9 @@ def main():
 
     log_df = load_log()
 
-    # -------------------------
+    # ======================================================
     # TAB 1 – WORKOUT
-    # -------------------------
+    # ======================================================
     with tab_workout:
         col_left, col_right = st.columns([2, 1])
 
@@ -561,93 +582,104 @@ def main():
             st.subheader("Today's Task List")
             st.write("Suggested sets, reps, and rest based on your goal. You log what you actually do.")
 
-            for ex in PROGRAM[day]:
-                st.markdown("---")
+            for ex in PROGRAM[today_day]:
                 ex_name = ex["name"]
                 st.markdown(f"### {ex_name}")
+
                 st.write(f"**Equipment:** {ex['equipment']}")
                 st.write(f"**Muscles:** {ex['muscles']}")
-                with st.expander("Form & posture details", expanded=False):
-                    st.write(ex["description"])
 
-                rec_sets, rec_reps, rec_rest = recommended_sets_reps_rest(
-                    goal, ex["base_sets"], ex["base_reps"], ex["compound"]
-                )
+                with st.expander("Form & posture details", expanded=False):
+                    st.write("Keep shoulders tight, brace core, control the weight. No ego lifting, smooth reps.")
+
+                base_sets = 3
+                base_reps = 8
+                rec_sets, rec_reps, rec_rest = recommended_sets_reps_rest(goal, base_sets, base_reps, ex["compound"])
+
                 st.write("**Suggested plan:**")
-                st.write(f"- Sets: {rec_sets}")
+                st.write(f"- Sets per set: {rec_sets}")
                 st.write(f"- Reps per set: {rec_reps}")
                 st.write(f"- Rest between sets: {rec_rest} seconds")
 
-                last_df = get_last_entries(log_df, day, ex_name)
+                last_df = get_last_entries(log_df, today_day, ex_name)
                 if last_df is not None and not last_df.empty:
                     last = last_df.iloc[-1]
-                    dt_str = last["datetime"].strftime("%Y-%m-%d %H:%M:%S") if not pd.isna(last["datetime"]) else "unknown"
+                    dt_str = last["datetime"]
+                    if isinstance(dt_str, datetime):
+                        when_str = dt_str.strftime("%Y-%m-%d %H:%M")
+                    else:
+                        try:
+                            when_str = pd.to_datetime(dt_str).strftime("%Y-%m-%d %H:%M")
+                        except Exception:
+                            when_str = "unknown"
                     st.info(
-                        f"Last logged: total {last['total_weight_lbs']} lbs "
-                        f"(added {last['plate_weight_lbs']} + base {last['base_weight_lbs']}), "
-                        f"{last['reps']} reps on {dt_str} "
-                        f"(Difficulty {last['difficulty']}/10)"
+                        f"Last logged total: {last.get('total_weight_lbs', 0)} lbs "
+                        f"for {last.get('reps', 0)} reps at difficulty "
+                        f"{last.get('difficulty', 'N/A')}/10 on {when_str}."
                     )
 
-                suggested_total_lbs, est_1rm_lbs = hybrid_weight_suggestion(log_df, day, ex_name, goal)
+                suggested_total_lbs, est_1rm_lbs = hybrid_weight_suggestion(log_df, today_day, ex_name, goal)
                 if est_1rm_lbs is not None:
                     st.write(f"Estimated 1RM from history: ~{est_1rm_lbs:.1f} lbs")
                 if suggested_total_lbs is not None:
                     st.write(f"Suggested working total weight today: ~{suggested_total_lbs:.1f} lbs")
 
-                st.write("#### Log a set for this exercise")
+                st.write("**Log a set for this exercise**")
 
                 plate_weight = st.number_input(
-                    f"Weight added (plates or pin setting) – {ex_name} (lbs)",
+                    f"Plate weight added (plates or pin) – {ex_name} (lbs)",
                     min_value=0.0,
-                    step=5.0,
-                    key=f"plate_{day}_{ex_name}",
-                    help="Enter the weight you added (plates or pin). This is always in pounds."
+                    max_value=2000.0,
+                    step=2.5,
+                    key=f"plate_{today_day}_{ex_name}",
                 )
 
                 base_type = st.selectbox(
                     f"Base weight type for {ex_name}",
                     ["Starting weight", "Starting resistance"],
-                    key=f"basetype_{day}_{ex_name}",
-                    help="Label from the machine that describes its built-in starting load."
+                    key=f"base_type_{today_day}_{ex_name}",
+                    help="Label taken from the machine that describes its built-in starting load.",
                 )
 
                 default_base = 0.0
                 if last_df is not None and not last_df.empty:
-                    default_base = float(last_df.iloc[-1]["base_weight_lbs"])
+                    default_base = float(last_df.iloc[-1].get("base_weight_lbs", 0.0))
 
                 base_weight = st.number_input(
                     f"Machine base ({base_type}) for {ex_name} (lbs, 0 if none)",
                     min_value=0.0,
-                    step=5.0,
+                    max_value=500.0,
+                    step=1.0,
                     value=default_base,
-                    key=f"base_{day}_{ex_name}",
+                    key=f"base_{today_day}_{ex_name}",
                 )
 
                 total_weight = plate_weight + base_weight
-                st.write(f"**Total load this set (added + base): {total_weight:.1f} lbs**")
+                st.write(f"Total load this set (added + base): **{total_weight:.1f} lbs**")
 
                 reps = st.number_input(
                     f"Reps completed for {ex_name}",
                     min_value=0,
+                    max_value=50,
                     step=1,
-                    key=f"reps_{day}_{ex_name}",
-                )
-                difficulty = st.number_input(
-                    f"Difficulty (1–10, can be decimal) for {ex_name}",
-                    min_value=0.0,
-                    max_value=10.0,
-                    step=0.5,
-                    key=f"diff_{day}_{ex_name}",
+                    key=f"reps_{today_day}_{ex_name}",
                 )
 
-                if st.button(f"Save set for {ex_name}", key=f"save_{day}_{ex_name}"):
+                difficulty = st.number_input(
+                    f"Difficulty (1–10, can be decimal) for {ex_name}",
+                    min_value=1.0,
+                    max_value=10.0,
+                    step=0.5,
+                    key=f"diff_{today_day}_{ex_name}",
+                )
+
+                if st.button(f"Save set for {ex_name}", key=f"save_{today_day}_{ex_name}"):
                     if reps <= 0 or total_weight <= 0:
                         st.warning("Enter a positive total weight and reps before saving.")
                     else:
                         row = {
                             "datetime": datetime.now(),
-                            "day": day,
+                            "day": today_day,
                             "exercise": ex_name,
                             "plate_weight_lbs": plate_weight,
                             "base_weight_lbs": base_weight,
@@ -656,7 +688,7 @@ def main():
                             "reps": reps,
                             "difficulty": difficulty,
                             "goal": goal,
-                            "user_bodyweight_kg": st.session_state.raw_weight_kg,
+                            "user_bodyweight_kg": bodyweight_kg,
                         }
                         save_log_row(row)
                         st.success("Set saved to log.")
@@ -664,104 +696,89 @@ def main():
         with col_right:
             st.subheader("Muscle Map & Legend")
 
-            if os.path.exists("muscles_front_back.png"):
-                st.image(
-                    "muscles_front_back.png",
-                    caption="Front & Back muscle groups",
-                    use_container_width=True
-                )
-            elif os.path.exists("muscles_front.png") or os.path.exists("muscles_back.png"):
-                tabs = st.tabs(["Front", "Back"])
-                if os.path.exists("muscles_front.png"):
-                    with tabs[0]:
-                        st.image("muscles_front.png", caption="Front muscle groups", use_container_width=True)
-                if os.path.exists("muscles_back.png"):
-                    with tabs[-1]:
-                        st.image("muscles_back.png", caption="Back muscle groups", use_container_width=True)
+            img_path = "muscles_front_back.png"
+            if os.path.exists(img_path):
+                st.image(img_path, caption="Front & Back muscle groups", use_container_width=True)
             else:
-                st.info(
-                    "Place 'muscles_front_back.png' (or 'muscles_front.png' and 'muscles_back.png') "
-                    "in this folder to show muscle diagrams here."
-                )
+                st.info("Place 'muscles_front_back.png' in this folder to show the muscle diagram here.")
 
             with st.expander("Legend: Terms & Scales", expanded=False):
                 st.markdown(
                     """
-                    **Sets** – How many times you repeat the exercise block.  
-                    **Reps** – Number of times you do the movement in one set.  
+**Sets** – How many times you repeat the exercise block.  
+**Reps** – Number of times you do the movement in one set.  
 
-                    **Difficulty (1–10):**  
-                    - 1–4 = Easy / warm-up  
-                    - 5–7 = Working, could do more reps  
-                    - 8–9 = Hard, 1–2 reps left  
-                    - 10 = Max effort, no reps left  
+**Difficulty (1–10)**  
+1–3 = Easy / warm-up  
+4–6 = Working, could do more reps  
+7–9 = Hard, 1–2 reps left  
+10 = No extra reps left  
 
-                    **Weight fields (always in lbs):**  
-                    - **Weight added** – Plates or pin setting you add.  
-                    - **Base weight** – Machine's labeled starting weight or resistance.  
-                    - **Total load** – Added + base.  
+**Weight fields (always in lbs)**  
+- **Plate weight** – Plates or pin setting you add.  
+- **Base weight** – Machine's labeled starting weight or resistance.  
+- **Total load** – Added + base.  
 
-                    **Goals:**  
-                    - **Strength** – Heavier weight, lower reps, longer rest  
-                    - **Muscle Growth** – Moderate weight, 8–15 reps, moderate rest  
-                    - **Endurance** – Lighter weight, higher reps, shorter rest  
-                    - **General Fitness** – Balanced approach  
-                    """
+**Goals**  
+- **Strength** = Heavier weight, lower reps, longer rest.  
+- **Muscle Growth** = Moderate weight, 8–15 reps, moderate rest.  
+- **Endurance** = Lighter weight, higher reps, shorter rest.  
+- **General Fitness** = Balanced approach.  
+"""
                 )
 
-    # -------------------------
+    # ======================================================
     # TAB 2 – HISTORY / CHARTS
-    # -------------------------
+    # ======================================================
     with tab_history:
-        st.subheader("History & Progress Charts")
+        st.subheader("Bodyweight Trend")
+
+        if log_df.empty or "user_bodyweight_kg" not in log_df.columns:
+            st.write("No bodyweight data logged yet.")
+        else:
+            bw_df = log_df.dropna(subset=["user_bodyweight_kg"]).copy()
+            if not bw_df.empty:
+                bw_df = bw_df.sort_values("datetime")
+                display_col = "user_bodyweight_kg"
+                label = "Bodyweight (kg)"
+                if unit_system.startswith("Imperial"):
+                    bw_df["bodyweight_lbs"] = bw_df["user_bodyweight_kg"].apply(kg_to_lbs)
+                    display_col = "bodyweight_lbs"
+                    label = "Bodyweight (lbs)"
+                bw_df = bw_df.set_index("datetime")
+                st.line_chart(bw_df[display_col], use_container_width=True)
+                st.caption(label)
+            else:
+                st.write("No bodyweight data logged yet.")
+
+        st.markdown("---")
+        st.subheader("Per-exercise Progress")
 
         if log_df.empty:
             st.write("No sets logged yet.")
         else:
-            st.markdown("### Bodyweight Trend")
-            bw_df = log_df.dropna(subset=["user_bodyweight_kg"]).copy()
-            if not bw_df.empty:
-                bw_df = bw_df.sort_values("datetime")
-                bw_df["date"] = bw_df["datetime"].dt.date
-                bw_daily = bw_df.groupby("date")["user_bodyweight_kg"].last().reset_index()
-
-                if unit_system.startswith("Imperial"):
-                    bw_daily["bodyweight_display"] = bw_daily["user_bodyweight_kg"].apply(kg_to_lbs)
-                    bw_label = "Bodyweight (lbs)"
-                else:
-                    bw_daily["bodyweight_display"] = bw_daily["user_bodyweight_kg"]
-                    bw_label = "Bodyweight (kg)"
-
-                bw_daily = bw_daily.set_index("date")
-                st.line_chart(bw_daily["bodyweight_display"], use_container_width=True)
-                st.caption(bw_label)
-            else:
-                st.write("No bodyweight data logged yet.")
-
-            st.markdown("---")
-            st.markdown("### Exercise Progress")
-
-            ex_names = sorted(log_df["exercise"].unique())
+            ex_names = sorted(log_df["exercise"].dropna().unique())
             ex_sel = st.selectbox("Select exercise for charts", ex_names)
 
             sub = log_df[log_df["exercise"] == ex_sel].sort_values("datetime")
             if sub.empty:
                 st.write("No data for this exercise yet.")
             else:
+                sub = sub.copy()
                 sub["date"] = sub["datetime"].dt.date
                 sub["volume"] = sub["total_weight_lbs"] * sub["reps"]
 
                 est_list = []
-                for _, row in sub.iterrows():
-                    w = row["total_weight_lbs"]
-                    r = row["reps"]
-                    if w > 0 and r > 0:
-                        est_list.append(w * (1 + r / 30.0))
+                for _, r in sub.iterrows():
+                    w = r["total_weight_lbs"]
+                    rep = r["reps"]
+                    if w > 0 and rep > 0:
+                        est_list.append(w * (1 + rep / 30.0))
                     else:
                         est_list.append(None)
                 sub["est_1rm_lbs"] = est_list
 
-                st.markdown(f"#### Progress for {ex_sel}")
+                st.markdown("#### Progress for " + ex_sel)
 
                 c1, c2 = st.columns(2)
 
@@ -770,9 +787,9 @@ def main():
                     chart_df = sub[["datetime", "total_weight_lbs"]].set_index("datetime")
                     st.line_chart(chart_df, use_container_width=True)
 
-                    st.write("Volume (total load × reps, lbs·reps)")
-                    vol_df = sub[["datetime", "volume"]].set_index("datetime")
-                    st.line_chart(vol_df, use_container_width=True)
+                    st.write("Volume (total load × reps, lbs×reps)")
+                    chart_vol = sub[["datetime", "volume"]].set_index("datetime")
+                    st.line_chart(chart_vol, use_container_width=True)
 
                 with c2:
                     st.write("Difficulty trend")
@@ -783,31 +800,14 @@ def main():
                     est_df = sub[["datetime", "est_1rm_lbs"]].set_index("datetime")
                     st.line_chart(est_df, use_container_width=True)
 
-                sub_display = sub.copy()
-                if "user_bodyweight_kg" in sub_display.columns:
-                    if unit_system.startswith("Imperial"):
-                        sub_display["bodyweight_lbs"] = sub_display["user_bodyweight_kg"].apply(kg_to_lbs)
-                    else:
-                        sub_display["bodyweight_kg"] = sub_display["user_bodyweight_kg"]
-
-                with st.expander("Raw log for this exercise", expanded=False):
-                    st.dataframe(sub_display, use_container_width=True)
-
         if show_log_table:
             st.markdown("---")
-            st.subheader("Full Log (tail)")
+            st.subheader("Full log (last 200 rows)")
             if log_df.empty:
                 st.write("No sets logged yet.")
             else:
-                log_display = log_df.copy()
-                if "user_bodyweight_kg" in log_display.columns:
-                    if unit_system.startswith("Imperial"):
-                        log_display["bodyweight_lbs"] = log_display["user_bodyweight_kg"].apply(kg_to_lbs)
-                    else:
-                        log_display["bodyweight_kg"] = log_display["user_bodyweight_kg"]
-                st.dataframe(log_display.tail(50), use_container_width=True)
+                st.dataframe(log_df.tail(200), use_container_width=True)
 
 
 if __name__ == "__main__":
     main()
-
