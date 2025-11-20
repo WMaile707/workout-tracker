@@ -3,3 +3,5 @@ openai
 pandas
 numpy
 pillow
+gspread
+google-auth
