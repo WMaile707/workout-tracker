@@ -4,210 +4,111 @@ from datetime import datetime
 import os
 from openai import OpenAI  # OpenAI client
 
+import json
+import gspread
+from google.oauth2.service_account import Credentials
+
 # ======================================================
 # CONFIG
 # ======================================================
-
-LOG_FILE = "workout_log.csv"
-AI_ENABLED = True  # AI coach ON (requires OPENAI_API_KEY env var)
-
-
 # ======================================================
-# UNIT CONVERSIONS
+# GOOGLE SHEETS LOGGING HELPERS
 # ======================================================
 
-def lbs_to_kg(lbs: float) -> float:
-    return lbs * 0.45359237
+def get_log_worksheet():
+    """
+    Connect to the Google Sheet and return the 'log' worksheet.
+    Uses:
+    - st.secrets['GOOGLE_SERVICE_ACCOUNT_JSON']
+    - st.secrets['GOOGLE_SHEET_ID']
+    """
+    sa_info = json.loads(st.secrets["GOOGLE_SERVICE_ACCOUNT_JSON"])
+    creds = Credentials.from_service_account_info(
+        sa_info,
+        scopes=["https://www.googleapis.com/auth/spreadsheets"],
+    )
+    client = gspread.authorize(creds)
+    sheet = client.open_by_key(st.secrets["GOOGLE_SHEET_ID"])
+    ws = sheet.worksheet("log")
+    return ws
 
-
-def kg_to_lbs(kg: float) -> float:
-    return kg / 0.45359237
-
-
-def in_to_cm(inches: float) -> float:
-    return inches * 2.54
-
-
-def cm_to_in(cm: float) -> float:
-    return cm / 2.54
-
-
-# ======================================================
-# PROGRAM TEMPLATE – 4-DAY UPPER/LOWER SPLIT
-# ======================================================
-
-PROGRAM = {
-    "Upper 1": [
-        {
-            "name": "Flat Barbell Bench Press",
-            "equipment": "Smith Machine / Bench Press Station",
-            "muscles": "Chest, triceps, front delts",
-            "description": "Lie on bench, grip bar slightly wider than shoulders, lower to mid-chest, press back up under control.",
-            "base_sets": 3,
-            "base_reps": 8,
-            "compound": True,
-        },
-        {
-            "name": "Lat Pulldown",
-            "equipment": "Lat Pulldown Machine",
-            "muscles": "Lats, upper back, biceps",
-            "description": "Sit with thighs locked, grab bar just wider than shoulders, pull to upper chest, control back up without swinging.",
-            "base_sets": 3,
-            "base_reps": 10,
-            "compound": True,
-        },
-        {
-            "name": "Seated Cable Row",
-            "equipment": "Seated Cable Row Machine",
-            "muscles": "Mid-back, lats, rear delts, biceps",
-            "description": "Sit upright, slight lean forward, pull handle toward lower chest/upper stomach, squeeze shoulder blades, control forward.",
-            "base_sets": 3,
-            "base_reps": 10,
-            "compound": True,
-        },
-        {
-            "name": "Dumbbell Shoulder Press",
-            "equipment": "Adjustable Bench + Dumbbells",
-            "muscles": "Shoulders (delts), triceps",
-            "description": "Seated, dumbbells at shoulder height, press up above head without locking out hard, control back down.",
-            "base_sets": 3,
-            "base_reps": 10,
-            "compound": True,
-        },
-    ],
-    "Lower 1": [
-        {
-            "name": "Leg Press",
-            "equipment": "Leg Press Machine",
-            "muscles": "Quads, glutes, hamstrings",
-            "description": "Feet shoulder-width on platform, lower until knees ~90°, press up without locking knees.",
-            "base_sets": 3,
-            "base_reps": 10,
-            "compound": True,
-        },
-        {
-            "name": "Romanian Deadlift",
-            "equipment": "Barbell or Dumbbells",
-            "muscles": "Hamstrings, glutes, lower back",
-            "description": "Soft knees, hinge at hips, slide weight down thighs until stretch in hamstrings, then stand back up.",
-            "base_sets": 3,
-            "base_reps": 8,
-            "compound": True,
-        },
-        {
-            "name": "Leg Curl",
-            "equipment": "Seated or Lying Leg Curl Machine",
-            "muscles": "Hamstrings",
-            "description": "Curl the pad toward your butt under control, pause, then lower slowly.",
-            "base_sets": 3,
-            "base_reps": 12,
-            "compound": False,
-        },
-        {
-            "name": "Calf Raise",
-            "equipment": "Calf Raise Machine or Leg Press (balls of feet on edge)",
-            "muscles": "Calves (gastrocnemius, soleus)",
-            "description": "Raise heels as high as possible, squeeze at top, lower slowly to full stretch.",
-            "base_sets": 3,
-            "base_reps": 12,
-            "compound": False,
-        },
-    ],
-    "Upper 2": [
-        {
-            "name": "Incline Dumbbell Press",
-            "equipment": "Incline Bench + Dumbbells",
-            "muscles": "Upper chest, front delts, triceps",
-            "description": "Bench at ~30°, press dumbbells from chest up over shoulders, control down.",
-            "base_sets": 3,
-            "base_reps": 10,
-            "compound": True,
-        },
-        {
-            "name": "Chest-Supported Row",
-            "equipment": "Chest-Supported Row Machine or Incline Bench + Dumbbells",
-            "muscles": "Upper back, lats, rear delts",
-            "description": "Chest on pad, pull handles or dumbbells toward lower chest, squeeze shoulder blades, control down.",
-            "base_sets": 3,
-            "base_reps": 10,
-            "compound": True,
-        },
-        {
-            "name": "Lateral Raise",
-            "equipment": "Dumbbells or Cable",
-            "muscles": "Side delts (shoulders)",
-            "description": "Raise dumbbells out to sides to shoulder height with slight bend in elbows, control down.",
-            "base_sets": 3,
-            "base_reps": 12,
-            "compound": False,
-        },
-        {
-            "name": "Cable Triceps Pushdown",
-            "equipment": "Cable Station with Straight or Rope Attachment",
-            "muscles": "Triceps",
-            "description": "Elbows by sides, extend handle straight down, squeeze triceps, control back up without swinging.",
-            "base_sets": 3,
-            "base_reps": 12,
-            "compound": False,
-        },
-    ],
-    "Lower 2": [
-        {
-            "name": "Hack Squat or Smith Squat",
-            "equipment": "Hack Squat Machine or Smith Machine",
-            "muscles": "Quads, glutes",
-            "description": "Feet about shoulder-width, squat down under control until thighs at least parallel, drive back up.",
-            "base_sets": 3,
-            "base_reps": 8,
-            "compound": True,
-        },
-        {
-            "name": "Walking Lunges",
-            "equipment": "Bodyweight or Dumbbells",
-            "muscles": "Quads, glutes, hamstrings",
-            "description": "Step forward, drop back knee toward floor, front shin mostly vertical, push back up and step through.",
-            "base_sets": 3,
-            "base_reps": 10,
-            "compound": True,
-        },
-        {
-            "name": "Leg Extension",
-            "equipment": "Leg Extension Machine",
-            "muscles": "Quads",
-            "description": "Extend knees to straighten legs, squeeze quads, control back down.",
-            "base_sets": 3,
-            "base_reps": 12,
-            "compound": False,
-        },
-        {
-            "name": "Seated or Standing Calf Raise",
-            "equipment": "Calf Raise Machine",
-            "muscles": "Calves",
-            "description": "Raise up onto toes as high as possible, squeeze, lower slowly into stretch.",
-            "base_sets": 3,
-            "base_reps": 12,
-            "compound": False,
-        },
-    ],
-}
-
-GOALS = ["Strength", "Muscle Growth", "Endurance", "General Fitness"]
-
-
-# ======================================================
-# LOGGING HELPERS
-# ======================================================
 
 def load_log():
-    if os.path.exists(LOG_FILE):
-        df = pd.read_csv(LOG_FILE)
+    """
+    Load the full workout log from the Google Sheet.
+
+    If the sheet is empty, return an empty DataFrame
+    with the expected columns.
+    """
+    try:
+        ws = get_log_worksheet()
+        data = ws.get_all_values()
+        if not data:
+            # No rows yet
+            return pd.DataFrame(
+                columns=[
+                    "datetime",
+                    "day",
+                    "exercise",
+                    "plate_weight_lbs",
+                    "base_weight_lbs",
+                    "base_type",
+                    "total_weight_lbs",
+                    "reps",
+                    "difficulty",
+                    "goal",
+                    "user_bodyweight_kg",
+                ]
+            )
+
+        # First row is header
+        headers = data[0]
+        rows = data[1:]
+        if not rows:
+            return pd.DataFrame(columns=headers)
+
+        df = pd.DataFrame(rows, columns=headers)
+
+        # Convert types
         if "datetime" in df.columns:
-            df["datetime"] = pd.to_datetime(df["datetime"])
-        if "user_bodyweight_kg" not in df.columns and "user_bodyweight" in df.columns:
-            df = df.rename(columns={"user_bodyweight": "user_bodyweight_kg"})
+            df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
+        for col in ["plate_weight_lbs", "base_weight_lbs", "total_weight_lbs", "reps", "difficulty", "user_bodyweight_kg"]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+
         return df
-    return pd.DataFrame(
-        columns=[
+
+    except Exception as e:
+        # On error, return empty DF so the app still runs
+        st.warning(f"Error loading log from Google Sheets: {e}")
+        return pd.DataFrame(
+            columns=[
+                "datetime",
+                "day",
+                "exercise",
+                "plate_weight_lbs",
+                "base_weight_lbs",
+                "base_type",
+                "total_weight_lbs",
+                "reps",
+                "difficulty",
+                "goal",
+                "user_bodyweight_kg",
+            ]
+        )
+
+
+def save_log_row(row_dict):
+    """
+    Append a single row (dict) to the Google Sheet 'log' worksheet.
+    If sheet has no header yet, write header first.
+    """
+    try:
+        ws = get_log_worksheet()
+
+        # Get existing data to see if header exists
+        existing = ws.get_all_values()
+        expected_cols = [
             "datetime",
             "day",
             "exercise",
@@ -220,13 +121,41 @@ def load_log():
             "goal",
             "user_bodyweight_kg",
         ]
-    )
 
+        # If sheet empty, write header row
+        if not existing:
+            ws.append_row(expected_cols)
+        else:
+            # If header exists but is different/short, you could adjust here if needed
+            pass
 
-def save_log_row(row_dict):
-    df = load_log()
-    df = pd.concat([df, pd.DataFrame([row_dict])], ignore_index=True)
-    df.to_csv(LOG_FILE, index=False)
+        # Ensure datetime is string
+        dt_val = row_dict.get("datetime")
+        if isinstance(dt_val, datetime):
+            dt_str = dt_val.isoformat()
+        else:
+            dt_str = str(dt_val) if dt_val is not None else ""
+
+        # Build row in correct column order
+        row_values = [
+            dt_str,
+            row_dict.get("day", ""),
+            row_dict.get("exercise", ""),
+            row_dict.get("plate_weight_lbs", ""),
+            row_dict.get("base_weight_lbs", ""),
+            row_dict.get("base_type", ""),
+            row_dict.get("total_weight_lbs", ""),
+            row_dict.get("reps", ""),
+            row_dict.get("difficulty", ""),
+            row_dict.get("goal", ""),
+            row_dict.get("user_bodyweight_kg", ""),
+        ]
+
+        ws.append_row(row_values)
+
+    except Exception as e:
+        st.warning(f"Error saving log row to Google Sheets: {e}")
+
 
 
 def get_last_entries(log_df, day, exercise_name):
@@ -881,3 +810,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
